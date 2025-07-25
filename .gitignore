@@ -1,0 +1,6 @@
+build
+install
+
+# !docker/build/install - 例外规则：不要忽略 docker/build/install 文件或目录（即使它匹配第2条规则）
+!docker/build
+!docker/build/install
