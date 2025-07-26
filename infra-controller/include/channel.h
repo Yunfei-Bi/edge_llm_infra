@@ -24,20 +24,26 @@ namespace StackFlows {
 
 class llm_channel_obj {
 private:
-    std::unordered_map<int, std::shared_ptr<zpmq>> zmq_;
-    std::atomic<int> zmq_url_index_;
-    std::unordered_map<std::string, int> zmq_url_map_;
+
+    // 通过work_id去订阅
+    std::unordered_map<int, std::shared_ptr<pzmq>> zmq_; // ZMQ连接池
+
+    // 通过url订阅
+    std::atomic<int> zmq_url_index_; // 连接索引（原子操作）
+
+    // 通用subscriber接口
+    std::unordered_map<std::string, int> zmq_url_map_; // url到索引的映射
 
 public:
-    std::string unit_name_;
-    bool enoutput_;
-    bool enstream_;
-    std::string request_id_;
-    std::string work_id_;
-    std::string inference_url_;
-    std::string publisher_url_;
-    std::string output_url_;
-    std::string publisher_url_;
+    std::string unit_name_; // 单元名称
+    bool enoutput_; // 是否启用输出
+    bool enstream_; // 是否启用流式传输
+    std::string request_id_; // 当前请求ID，rpc请求的标识
+    std::string work_id_; // 工作ID
+    std::string inference_url_; // 外部用户推理服务url，pub/sub
+    std::string publisher_url_; // pub给其他节点模块
+    std::string output_url_; // 输出给外部用户通信，pull/push
+    std::string publisher_url;
 
     llm_channel_obj(const std::string& _publisher_url, 
         const std::string &inference_url, const std::string& unit_name);
