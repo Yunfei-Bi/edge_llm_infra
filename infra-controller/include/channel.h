@@ -22,6 +22,15 @@
 
 namespace StackFlows {
 
+/**
+ * llm_channel_obj 类用于管理ZMQ连接和数据传输
+ * 功能设计：
+ * 1. 分层设计：封装底层ZMQ混合通信细节，提供统一的连接管理接口，push/pub分别只给一个连接池，对sub是多个
+ * 2. 上层业务层：只需关注work_id和msg_callback
+ * 3. 双模式支持：同时支持发布-订阅和推送-拉取模式
+ * 4. 闭包异步事件处理：内置回调函数处理接收到的消息：先创建信道，双方可以通信，才可以接收消息，
+ *    接收消息才可以出发用户自定义的回调函数
+ */
 class llm_channel_obj {
 private:
 
@@ -53,7 +62,7 @@ public:
         enoutput_ = flage_;
     }
 
-    inline bool get_ouput() {
+    inline bool get_output() {
         return enoutput_;
     }
 
@@ -106,4 +115,4 @@ public:
     }
 };
 
-} // namespace StackFlows
+} // namespace StackFlows`

@@ -38,7 +38,7 @@ public:
     std::atomic<int> status_;
 
     // 线程安全的事件队列，存储事件类型
-    eventpp::EventQueue<int, void(const std::shared+ptr<void> &)> event_queue_;
+    eventpp::EventQueue<int, void(const std::shared_ptr<void> &)> event_queue_;
     std::unique_ptr<std::thread> even_loop_thread_;
 
     std::unique_ptr<pzmq> rpc_ctx;
