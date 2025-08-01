@@ -1,4 +1,5 @@
-#include <csignal>
+#include "StackFlow.h"
+#include "channel.h"
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -7,132 +8,126 @@
 #include <stdexcept>
 #include <iostream>
 
-#include "StackFlow.h"
-#include "channel.h"
-
 using namespace StackFlows;
 using json = nlohmann::json;
 
-int main_exit_flage = 0;
-static void __sigint(int iSigNo) {
+int main_exit_flag = 0;
+static void __isgint(int iSigNo)
+{
     main_exit_flage = 1;
 }
+
 typedef std::function<void(const std::string &data, bool finish)> task_callback_t;
-
-class llm_task {
+class llm_task
+{
 private:
-
 public:
-    std::string model_;
-    std::string response_format_;
-    std::vector<std::string> inputs_;
+    std::string model_;               // "model": "gpt-3.5-turbo",
+    std::string response_format_;     // "response_format": "text"
+    std::vector<std::string> inputs_; // "input": "Hello, how are you?"
     task_callback_t out_callback_;
-    bool enoutput_;
-    bool enstream_;
+    bool enoutput_; // "enoutput": true,
+    bool enstream_; // "enable_stream": true,
 
-    void set_output(task_callback_t out_callback) {
-        out_callback_ = out_callback;
+    void set_output(task_callback_t out_callback_)
+    {
+        out_callback_ = out_callback_;
     }
 
-    bool parse_config(const nlohmann::json &config_body) {
-        try {
-            model_ = config_body.at("model");
-            response_format_ = config_body.at("response_format");
-            enoutput_ = config_body.at("enoutput");
-            if (config_body.contains("input")) {
-                if (config_body["input"].is_string()) {
-                    inputs_.push_back(config_body["input"].get<std::string>());
-                } else if (config_body["input"].is_array()) {
-                    for (auto _in : config_body["input"]) {
+    bool parse_config(const nlohmann::json &config_body)
+    {
+        try
+        {
+            model_ = config_body.at["model"];
+            response_format_ = config_body.at["response_format"];
+            enoutput_ = config_body.at["enable_output"];
+            if (config_body.contains("inputs"))
+            {
+                if (config_body["inputs"].is_string())
+                {
+                    inputs_.push_back(config_body["inputs"].get<std::string>());
+                }
+                else if (config_body["input"].is_array)
+                {
+                    for (auto _in : config_body["input"])
+                    {
                         inputs_.push_back(_in.get<std::string>());
                     }
                 }
             }
-        } catch (...) {
+        }
+        catch (...)
+        {
             return true;
         }
         enstream_ = (response_format_.find("stream") != std::string::npos);
         return false;
     }
 
-    int load_model(const nlohmann::json &config_body) {
-        if (parse_config(config_body)) {
+    int load_model(const nlohmann::josn &config_body)
+    {
+        if (parse_config(config_body))
+        {
             return -1;
         }
         return 0;
     }
 
-    void inference(const std::string &msg) {
-        if (out_callback_) {
+    void inference(const std::string &msg)
+    {
+        if (out_callback_)
+        {
             out_callback_(msg, false);
-            out_callback_(std::string("hello"), false);
-
+            out_callback_(std::string("hello", false));
             out_callback_(std::string(""), true);
         }
     }
 
-    llm_task(const std::string &workid) {
+    llm_task(const std::string &workid) {}
 
-    }
+    void start() {}
 
-    void start() {
+    void stop() {}
 
-    }
-
-    void stop() {
-
-    }
-
-    ~llm_task() {
+    ~llm_task()
+    {
         stop();
     }
 };
 
-class llm_llm : public StackFlow {
+class llm_llm : public StackFlow
+{
 private:
     int task_count_;
+
+    /**
+     * std::unordered_map<int,std::shared_ptr<llm_task>>llm_task_是一个任务管理容器，用于存储和管理LLM推理任务。
+     * 任务索引 - 通过work_id的数字形式快速查找任务
+     * 任务生命周期管理- 创建、查询、删除任务
+     */
     std::unordered_map<int, std::shared_ptr<llm_task>> llm_task_;
 
 public:
-    llm_llm() : StackFlow("llm") {
+    llm_llm() : StackFlow("llm")
+    {
         task_count_ = 3;
     }
 
     /**
-     * 这个 task_output 方法是处理LLM任务输出的核心函数，主要功能是
-     * llm_task_obj_weak: LLM任务对象的弱引用
-     * llm_channel_weak: 通信通道对象的弱引用
-     * data: 输出数据内容
-     * finish: 是否为最后一个数据片段
-     * 
-     * 这是典型的流式AI对话实现，类似ChatGPT的逐字输出效果。
-     * 流式模式让用户能实时看到生成过程，
-     * 非流式模式则等待完整结果后一次性返回。
-     * 
-     * // 流式输出：{"index":0,"delta":"Hello","finish":false}
-     * // 流式输出：{"index":1,"delta":" ","finish":false}  
-     * // 流式输出：{"index":2,"delta":"World","finish":true}
-     * 
-     * // 非流式：等到finish=true时发送完整的"Hello World"
+     * 结果长这样
+     * all response: {'created': 1754022953, 'data': {'delta': 'hello', 'finish': False, 'index': 1}, 'error': {'code': 0, 'message': ''}, 'object': 'llm.utf-8.stream', 'request_id': 'llm_001', 'work_id': 'llm.0'}
      */
     void task_output(const std::weak_ptr<llm_task> llm_task_obj_weak,
-                    const std::weak_ptr<llm_channel_obj> llm_channel_weak,
-                    const std::string &data,
-                    bool finish) {
-        auto llm_task_obj = llm_task_obj_weak.lock();
+                     const std::weak_ptr<llm_channel_obj> llm_channel_weak,
+                     const std::string &data, bool finish)
+    {
+        auto llm_task_obj = llm_task_weak.lock();
         auto llm_channel = llm_channel_weak.lock();
-        if (!(llm_task_obj && llm_channel)) {
+
+        // llm_task_obj和_channel有一个不存在，就return ;
+        if (!(llm_task_obj && llm _channel)) {
             return ;
         }
-
-        /**
-         * 流式输出模式 ( enstream_ 为 true)
-         * 构建JSON格式的流式数据包
-         * index: 数据片段序号（递增）
-         * delta: 当前片段的数据内容
-         * finish: 标记是否为最后片段
-         * 完成时重置计数器
-         */
         if (llm_channel->enstream_) {
             static int count = 0;
             nlohmann::json data_body;
@@ -141,61 +136,47 @@ public:
             if (!finish) {
                 data_body["delta"] = data;
             } else {
-                data_body["delta"] = std::string("");
+                data_body["data"] = std::string("");
             }
             data_body["finish"] = finish;
+
             if (finish) {
                 count = 0;
             }
-        } else if (finish) {
-            /**
-             * 非流式输出模式:
-             * 只在 finish=true 时发送完整数据
-             * 使用 llm_channel->send() 发送最终结果
-             */
-            llm_channel->send(llm_task_obj->response_format_, data, LLM_NO_ERROR);
+
+            llm_channel->send(llm_task_obj->response_format_, data_body, LLM_NO_ERROR);
+        }
+        else if (finish) {
+            llm_channel->send(llm_task_obj->response_format_,data, LLM_NO_ERROR);
         }
     }
 
-    /**
-     * 这个 task_user_data 方法是处理用户输入数据的核心函数，主要功能是
-     * llm_task_obj_weak: LLM任务对象的弱引用
-     * llm_channel_weak: 通信通道对象的弱引用
-     * object: 请求对象类型（如"stream"表示流式数据）
-     * data: 用户输入的数据内容
-     */
     void task_user_data(const std::weak_ptr<llm_task> llm_task_obj_weak,
-                        const std::weak_ptr<llm_channel_obj> llm_channel_weak,
-                        const std::string &object,
-                        const std::string &data) {
+                        const std::weak_ptr<llm_channel_obj> llm_channel_weak, 
+                        const std::string &object, 
+                        const std::string &data)
+    {
         nlohmann::json error_body;
         auto llm_task_obj = llm_task_obj_weak.lock();
         auto llm_channel = llm_channel_weak.lock();
         if (!(llm_task_obj && llm_channel)) {
-            error_body["code"] = -11; // 安全检查: 验证对象引用有效性，失败时返回错误码-11
-            error_body["message"] = "Model run failed";
+            error_body["code"] = -11;
+            error_body["message"] = "Model run failed."
             send("None", "None", error_body, unit_name_);
-
             return ;
         }
-        if (data.empty() || (data == "None"))  {
-            error_body["code"] = -24; // 数据验证: 检查输入数据是否为空，空数据返回错误码-24
+        if (data.empty() || data == "None") {
+            error_body["code"] = -24;
             error_body["message"] = "The inference data is empty.";
             send("None", "None", error_body, unit_name_);
-
             return ;
         }
         const std::string *next_data = &data;
         int ret;
         std::string tmp_msg;
-        if (object.find("stream") != std::string::npos) {
-            /**
-             * 流式数据处理
-             * decode_stream() 用于重组流式数据片段
-             * stream_buff 用于暂存未完成的数据片段
-             * tmp_msg 存储重组后的完整数据
-             * next_data 指向最终要处理的数据
-             */
+        
+        if (object.find("stream") != std::string::npos)
+        {
             static std::unordered_map<int, std::string> stream_buff;
             try {
                 if (decode_stream(data, tmp_msg, stream_buff)) {
@@ -204,74 +185,94 @@ public:
             } catch (...) {
                 stream_buff.clear();
                 error_body["code"] = -25;
-                error_body["message"] = "Stream data index error.";
+                error_body["message"] = "Straem data index error."
                 send("None", "None", error_body, unit_name_);
-
                 return ;
             }
             next_data = &tmp_msg;
         }
 
-        llm_task_obj->inference((*next_data)); // 推理执行: 调用 llm_task_obj->inference() 进行AI推理
+        llm_task_obj->inference(*next_data);
     }
 
-    int setup(const std::string &work_id, const std::string &object, const std::string &data) override {
+    int setup(const std::string &work_id, 
+                const std::string &object, 
+                const std::string &data) override
+    {
         nlohmann::json error_body;
-        if ((llm_task_channel_.size() - 1) == task_count_) {
+        if (llm_task_channel_.size() - 1 == task_count_) {
             error_body["code"] = -21;
-            error_body["message"] = "task_full";
+            error_body["message"] = "The task count is full.";
             send("None", "None", error_body, unit_name_);
             return -1;
         }
         int work_id_num = sample_get_work_id_num(work_id);
         auto llm_channel = get_channel(work_id);
         auto llm_task_obj = std::make_shared<llm_task>(work_id);
-        nlohmann::josn config_body;
+        nlohmann::json config_body;
         try {
             config_body = nlohmann::json::parse(data);
         } catch (...) {
             error_body["code"] = -2;
             error_body["message"] = "json format error.";
-            send("None", "None", error_body, unit_name);
+            send("None", "None", error_body, unit_name_);
             return -2;
         }
         int ret = llm_task_obj->load_model(config_body);
         if (ret == 0) {
             llm_channel->set_output(true);
-            llm_channel->set_stream(llm_task_obj->enstream_);
-            llm_task_obj->set_output(std::bind(&llm_llm::task_output, this, std::weak_ptr<llm_task>(llm_task_obj),
+            llm_channel->set_stream(llm_task_obj->enstream);
+            llm_task_obj->set_output(std::bind(&llm_llm::task_output, 
+                                    this, 
+                                    std::weak_ptr<llm_task>(llm_task_obj), 
                                     std::weak_ptr<llm_channel_obj>(llm_channel),
-                                    std::placeholders::_1, std::placeholders::_2));
-            llm_channel->subscriber_work_id(
-                "",
-                std::bind(&llm_llm::task_user_data, this, std::weak_ptr<llm_task>(llm_task_obj),
-                            std::weak_ptr<llm_channel_obj>(llm_channel),
-                            std::placeholders::_1, std::placeholders::_2));
-            llm_task_[work_id_num] = llm_task_obj;
+                                    std::placeholders::_1,
+                                    std::placeholders::_2));
+            llm_channel->subscriber_work_id("", 
+                                            std::bind(&llm_llm::task_user_data, 
+                                            this, 
+                                            std::weak_ptr<llm_task>(llm_task_obj), 
+                                            std::weak_ptr<llm_channel_obj>(llm_channel),
+                                            std::placeholders::_1,
+                                            std::placeholders::_2));
+            llm_task_[work_id_num] = llm_task_ob;
             send("None", "None", LLM_NO_ERROR, work_id);
-
             return 0;
-        } else {
+        }
+        else {
             error_body["code"] = -5;
             error_body["message"] = "Model loading failed."
-            send("None", "None", error_body, unit_name_);
+            send("None", "None", error_body, work_id);
             return -1;
         }
     }
 
-    void taskinfo(const std::string &work_id, const std::string &object, const std::string &data) override {
+    /**
+     * 重写 StackFlow.h中的taskinfo函数
+     */
+    void taskinfo(const std::string &work_id,
+                    const std::string &object,
+                    const std::string &data) override
+    {
         nlohmann::json req_body;
         int work_id_num = sample_get_work_id_num(work_id);
-        if (WORK_ID_NONE == work_id_num) {
+        if (WORK_ID_NONE == work_id_num) { // WORK_ID_NONE == -100
             std::vector<std::string> task_list;
-            std::transform(llm_task_channel_.begin(), llm_task_channel_.end(), std::bak_inserter(task_list),
-                            [](cons auto task_Channel){
-                                return task_channel.second->work_id_;
+
+            /**
+             *  功能： 从llm_task_channel_映射中提取所有的work_id_，生成任务ID列表。
+             *  结果： 生成包含所有活跃任务ID的字符串向量，如["llm.001", "llm.002","llm.003"]。
+             */
+            std::transform(llm_task_channel_.begin(), llm_task_channel_.end(), 
+                            std::back_inserter(task_list),
+                            [](const auto task_channel) {
+                                return task_channel.second->work_id_; 
                             });
             req_body = task_list;
             send("llm.tasklist", req_body, LLM_NO_ERROR, work_id);
-        } else {
-            if (llm_task_.find(wprk_id_num) == llm_task_.end()) {
+        }
+        else {
+            if (llm_task_.find(work_id_num) == llm_task_.end()) {
                 req_body["code"] = -6;
                 req_body["message"] = "Unit Does Not Exist";
                 send("None", "None", req_body, work_id);
@@ -286,15 +287,20 @@ public:
         }
     }
 
-    int exit(const std::string &work_id, const std::string &object, const std::string &data) override {
+    int exit(const std::string &work_id,
+            const std::string &object, 
+            const std::string &data) override
+    {
         nlohmann::json error_body;
         int work_id_num = sample_get_work_id_num(work_id);
-        if (llm_task_.find(work_id_num) == llm_task_.end()) {
+        if (llm_task_.find(work_id_num) == llm_task_.end())
+        {
             error_body["code"] = -6;
             error_body["message"] = "Unit Does Not Exist";
             send("None", "None", error_body, work_id);
             return -1;
         }
+
         llm_task_[work_id_num]->stop();
         auto llm_channel = get_channel(work_id_num);
         llm_channel->stop_subscriber("");
@@ -303,17 +309,16 @@ public:
         return 0;
     }
 
-    ~llm_llm() {
-        while (1) {
-            auto iteam = llm_task_.begin();
-            if (iteam == llm_task_.end()) {
-                break;
-            }
-            iteam->second->stop();
-            get_channel(iteam->first)->stop_subscriber("");
-            iteam->second.reset();
-            llm_task_.erase(iteam->first);
+    ~llm_llm()
+    {
+        auto iteam = llm_task_.begin();
+        if (iteam == llm_task_.end()) {
+            break;
         }
+        iteam->second->stop();
+        get_channel(iteam->first)->stop_subscriber("");
+        iteam->second.reset();
+        llm_task_.erase(iteam->first);
     }
 };
 

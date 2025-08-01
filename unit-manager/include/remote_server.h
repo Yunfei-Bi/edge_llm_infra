@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pzmq.hpp"
 #include <vector>
 #include <signal.h>
 #include <stdio.h>
@@ -9,7 +10,6 @@
 #include <time.h>
 #include <iostream>
 
-#include "pzmq.hpp"
 #include "all.h"
 #include "unit_data.h"
 

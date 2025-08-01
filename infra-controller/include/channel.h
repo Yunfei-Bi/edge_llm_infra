@@ -1,8 +1,12 @@
 #pragma once
 
+// #define __cplusplus 1
+
 #include <semaphore.h>
 #include <unistd.h>
 #include <iostream>
+// #define CONFIG_SUPPORTTHREADSAFE 0
+
 #include <string>
 #include <list>
 #include <functional>
@@ -11,9 +15,8 @@
 #include <eventpp/eventqueue.h>
 #include <thread>
 #include <memory>
-#include <regex>
-
 #include "json.hpp"
+#include <regex>
 #include "pzmq.hpp"
 #include "StackFlowUtil.h"
 
@@ -21,76 +24,55 @@
 #define LLM_NONE std::string("None")
 
 namespace StackFlows {
-
-/**
- * llm_channel_obj 类用于管理ZMQ连接和数据传输
- * 功能设计：
- * 1. 分层设计：封装底层ZMQ混合通信细节，提供统一的连接管理接口，push/pub分别只给一个连接池，对sub是多个
- * 2. 上层业务层：只需关注work_id和msg_callback
- * 3. 双模式支持：同时支持发布-订阅和推送-拉取模式
- * 4. 闭包异步事件处理：内置回调函数处理接收到的消息：先创建信道，双方可以通信，才可以接收消息，
- *    接收消息才可以出发用户自定义的回调函数
- */
 class llm_channel_obj {
 private:
-
-    // 通过work_id去订阅
-    std::unordered_map<int, std::shared_ptr<pzmq>> zmq_; // ZMQ连接池
-
-    // 通过url订阅
-    std::atomic<int> zmq_url_index_; // 连接索引（原子操作）
-
-    // 通用subscriber接口
-    std::unordered_map<std::string, int> zmq_url_map_; // url到索引的映射
+    std::unordered_map<int, std::shared_ptr<pzmq>> zmq_;
+    std::atomic<int> zmq_url_index_
+    std::unordered_map<std::string, int> zmq_url_map_;
 
 public:
-    std::string unit_name_; // 单元名称
-    bool enoutput_; // 是否启用输出
-    bool enstream_; // 是否启用流式传输
-    std::string request_id_; // 当前请求ID，rpc请求的标识
-    std::string work_id_; // 工作ID
-    std::string inference_url_; // 外部用户推理服务url，pub/sub
-    std::string publisher_url_; // pub给其他节点模块
-    std::string output_url_; // 输出给外部用户通信，pull/push
+    std::string unit_name_;
+    bool enoutput_;
+    bool enstream_;
+
+    std::string request_id_;
+    std::string work_id_;
+    std::string inference_url_;
+    std::string publisher_url_;
+    std::string output_url_;
     std::string publisher_url;
 
-    llm_channel_obj(const std::string& _publisher_url, 
-        const std::string &inference_url, const std::string& unit_name);
+    llm_channel_obj(const std::string &_publisher_url,
+                    const std::string &inference_url, 
+                    const std::string &unit_name);
     ~llm_channel_obj();
+    inline void set_output(bool flage) { enoutput_ = flage; }
+    inline bool get_output() { return enoutput_; }
+    inline void set_stream(bool flage) { enstream_ = flage; }
+    inline bool get_stream() { return enstream_; }
 
-    inline bool set_output() {
-        enoutput_ = flage_;
-    }
+    void subscriber_event_call(const std::function<void(const std::string &, 
+            const std::string&)> &call, pzmq *_pzmq, 
+            const std::shared_ptr<pzmq_data> &raw);
 
-    inline bool get_output() {
-        return enoutput_;
-    }
+    int subscriber_work_id(const std::string &work_id,
+                            const std::function<void(const std::string &)> &call)
+    
+    void stop_subscriber(const std::string &zmq_url);
 
-    inline void set_stream(bool flage) {
-        enstream_ = flage;
-    }
+    int send_raw_to_pub(const std::string &raw) 
 
-    inline bool get_stream() {
-        return enstream_;
-    }
-
-    void subscriber_event_call(const std::function<void(const std::string&, const std::string& )>& call,
-                                pzmq *_pzmq,
-                                std::shared_ptr<pzmq_data>& raw);
-    int subscriber_work_id(const std::string& work_id,
-                            const std::function<void(const std::string&, const std::string&)>& call);
-    void stop_subscriber_work_id(const std::string& work_id);
-    void subscriber(const std::string& zmq_url, const pzmq::msg_callback_fun& call);
-    void stop_subscriber(const std::string& zmq_url);
-    int send_raw_to_pub(const std::string& raw);
-    int send_raw_to_usr(const std::string& raw);
-    void set_push_url();
-    void cear_push_url();
-    static int send_raw_for_url(const std::string& zmq_url, const std::string& raw);
-
-    int send(const std::string& object, const nlohmann::json& data, 
-            const std::string& error_msg,
-            const std::string& work_id = "") {
+    /**
+     * 注意：与StackFlow.h中的send函数区分
+     * 层级： 更底层的实现，属于llm_channel_obj类
+     * 用途： 用于任务级通信，处理LLM任务的输出
+     * 目标：发送到预配置的发布者和用户连接
+     * 参数： work_id可选，默认使用内部的work_id_
+     * 行为：同时发送到发布者(send_raw_to_pub)和用户(send_raw_to_usr)
+     */
+    int send(const std::string &object, const nlohmann::json &data, 
+            const std::string &error_msg, const std::string &work_id = "") 
+    {
         nlohmann::json out_body;
         out_body["request_id"] = request_id_;
         out_body["work_id"] = work_id.empty() ? work_id_ : work_id;
@@ -100,19 +82,20 @@ public:
         if (error_msg.empty()) {
             out_body["error"]["code"] = 0;
             out_body["error"]["message"] = "";
-        } else {
-            out_body["error"] = error_msg;
         }
-
+        else {
+            out_body["error"] = errro_msg;
+        }
+        
         std::string out = out_body.dump();
         out += "\n";
-
         send_raw_to_pub(out);
         if (enoutput_) {
             return send_raw_to_usr(out);
         }
+
         return 0;
     }
-};
 
-} // namespace StackFlows`
+};
+} // namespace StackFlows
