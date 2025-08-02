@@ -1,10 +1,13 @@
+#pragma once
+
+#include <iostream>
 #include "channel.h"
 #include "sample_log.h"
-#include <iostream>
+
 
 using namespace StackFlows;
 
-llm_channel_obj : llm_channel_obj(const std::string &_publisher_url,
+llm_channel_obj::llm_channel_obj(const std::string &_publisher_url,
                                   const std::string &inference_url,
                                   const std::string &unit_name)
     : unit_name_(unit_name), inference_url_(inference_url), publisher_url_(_publisher_url)
@@ -129,6 +132,9 @@ int llm_channel_obj::send_raw_to_pub(const std::string &raw)
     return zmq_[-1]->send_data(raw);
 }
 
+/**
+ * send_raw_to_usr: 频繁向同一用户发送数据
+ */
 int llm_channel_obj::send_raw_to_usr(const std::string &raw)
 {
     if (zmq_[-2])
@@ -139,4 +145,28 @@ int llm_channel_obj::send_raw_to_usr(const std::string &raw)
     {
         return -1;
     }
+}
+
+void llm_channel_obj::set_push_url(const std::string &url)
+{
+    if (output_url_ != url)
+    {
+        output_url_ = url;
+        zmq_[-2].reset(new pzmq(output_url, ZMQ_PUSH));
+    }
+}
+
+void llm_channel_obj::cear_push_url()
+{
+    zmq_[-2].reset();
+}
+
+/**
+ * send_raw_for_url: 偶尔向不同地址发送数据
+ */
+int llm_channel_obj::send_raw_for_url(const std::string &zmq_url,
+                                       const std::string &raw)
+{
+    pzmq _zmq(zmq_url, ZMQ_PUSH);
+    return _zmq.send_data(raw);
 }

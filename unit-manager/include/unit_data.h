@@ -7,7 +7,7 @@ using namespace StackFlows;
 
 class unit_data {
 private:
-    std::unique_ptr<pzmq> user_inference_chennel_;
+    std::unique_ptr<pzmq> user_inference_chennal_;
 public:
     std::string work_id;
 
@@ -26,5 +26,7 @@ public:
 
     unit_data();
     void init_zmq(const std::string &url);
+    void send_msg(const std::string &json_str);
+    ~unit_data();
 };
 

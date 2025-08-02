@@ -17,6 +17,7 @@
 #define ZMQ_RPC_FUN (ZMQ_REP | 0x80)
 #define ZMQ_RPC_CALL (ZMQ_REQ | 0x80)
 
+
 namespace StackFlows {
 
 class pzmq {
@@ -26,7 +27,7 @@ public:
 
 public:
     const int rpc_url_head_length = 6;
-    std::string rpc_url_head_ = "ipc:///tpm/rpc.";
+    std::string rpc_url_head_ = "ipc:///tmp/rpc.";
     void *zmq_ctx_;
     void *zmq_socket_;
     std::unordered_map<std::string, rpc_callback_fun> zmq_fun_;
@@ -38,10 +39,13 @@ public:
     std::string zmq_url_;
     int timeout_;
 
-    bool is_bind() {
-        if ((mode_ == ZMQ_PUB) || (mode_ == ZMQ_PULL) || (mode_ == ZMQ_RPC_FUN)) {
+    bool is_bind()
+    {
+        if ((mode_ == ZMQ_PUB) || (mode_ == ZMQ_PULL) || (mode_ == ZMQ_RPC_FUN))
+        {
             return true;
-        } else {
+        }
+        else {
             return false;
         }
     }
@@ -60,29 +64,36 @@ public:
      * 按需分配：只有当程序真正需要进行 RPC 通信时，才会调用 zmq_ctx_new() 和 zmq_socket() 创建实际资源
      * 所以 NULL 值就是惰性初始化的标志，表示"资源尚未创建，等需要时再说"。
      */
-    pzmq(const std::string &server) 
-        : zmq_ctx_(NULL), zmq_socket_(NULL), rpc_server_(server), flage_(true), timeout_(3000) {
-        if (server.find("://") != std::string::npos) {
+    pzmq(const std::string &server)
+        : zmq_ctx_(nullptr), zmq_socket_(nullptr), rpc_server_(server), flage_(true), timeout_(3000)
+    {
+        if (server.find("://") != std::string::npos)
+        {
             rpc_url_head_.clear();
         }
     }
 
     // 具体通信模式创建
-    pzmq(const std::string &url, int mode, const msg_callback_fun &raw_call = nullptr)
-        : zmq_ctx_(NULL), zmq_socket_(NULL), mode_(mode), flage_(true), timeout_(3000) {
-        if ((url[0] != 'i') && (url[1] != 'p')) {
+    pzmq (const std::string &url, int mode, const msg_callback_fun &raw_call = nullptr)
+        : zmq_ctx_(nullptr), zmq_socket_(nullptr), mode_(mode), flage_(true), timeout_(3000)
+    {
+        if ((url[0] != 'i') && (url[1] != 'p'))
+        {
             rpc_url_head_.clear();
         }
-        if (mode_ != ZMQ_RPC_FUN) {
+        if (mode_ != ZMQ_RPC_FUN)
+        {
             creat(url, raw_call);
         }
     }
 
-    void set_timeout(int ms) {
+    void set_timeout(int ms)
+    {
         timeout_ = ms;
     }
 
-    int get_timeout() {
+    int get_timeout()
+    {
         return timeout_;
     }
 
