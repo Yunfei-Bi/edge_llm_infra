@@ -780,3 +780,146 @@ if (work_id匹配格式) {
   - 简单性: 通过文件系统socket，无需网络配置
 
   这是一个典型的分布式RPC架构，实现了服务间的松耦合通信！
+
+## 正确的连接架构：
+
+  LLM Unit (实际的推理服务)
+      ↓ (通过 ZMQ_PUB 发布推理结果)
+  inference_url ← llm_channel_obj (ZMQ_SUB 订阅)
+      ↓ (数据处理后)
+  llm_channel_obj → output_url (ZMQ_PUSH)
+      ↓
+  zmq_bus_com (ZMQ_PULL) ← TcpSession ← TCP Server ← TCP Client
+
+  详细数据流向：
+
+  1. LLM Unit → inference_url：
+    - LLM 推理服务通过 ZMQ_PUB 发布推理结果到 inference_url
+    - 这是在 unit_data.cpp:12 创建的：user_inference_chennal_ = 
+  std::make_unique<pzmq>(inference_url, ZMQ_PUB)
+  2. llm_channel_obj 接收数据：
+    - llm_channel_obj 通过 ZMQ_SUB 订阅 inference_url，接收推理结果
+    - 在 channel.cpp:80-82 创建订阅连接
+  3. llm_channel_obj 转发数据：
+    - 收到数据后，通过 send_raw_to_usr() 方法（channel.cpp:132-137）
+    - 使用 zmq_[-2]（ZMQ_PUSH）将数据推送到 output_url_
+    - output_url_ 是通过 set_push_url() 设置的
+  4. TcpSession 接收数据：
+    - zmq_bus_com 通过 ZMQ_PULL 连接到分配的端口，接收来自 llm_channel_obj 的数据
+    - 然后通过 TCP 连接发送给客户端
+
+  关键连接点：
+  - inference_url 和 output_url 是两个不同的 ZMQ 端口
+  - llm_channel_obj 作为中间桥梁，从 inference_url 接收，向 output_url 发送
+  - TcpSession 从 output_url 对应的端口接收数据
+
+  这样就实现了：LLM推理服务 → ZMQ通道 → infra-controller → unit-manager → TCP客户端 的完整数据流。
+
+## 架构流程：
+LLM推理服务 → inference_url → llm_channel_obj → output_url (ZMQ_PUSH/PULL) → zmq_bus_com → unit_action_match → TCP响应 → TcpClient
+
+- publisher_url_ 和 inference_url_ 是两个不同的URL
+- 从代码看，llm_channel_obj 构造函数中：
+  - publisher_url_ 用于创建 ZMQ_PUB（channel.cpp:13）
+  - inference_url_ 用于创建 ZMQ_SUB（channel.cpp:77-82）
+
+## 太好了！现在我完全理解了！
+
+  完整的响应回流过程：
+
+  1. unit_action_match 处理请求后：
+    - 调用 usr_print_error() 或类似的响应函数
+    - 传入 com_id（TCP连接的标识符）
+  2. zmq_com_send(com_id, response) 的工作：
+    - 根据 com_id 构建ZMQ URL：sprintf(zmq_push_url, zmq_c_format.c_str(), 
+  com_id)
+    - 创建 ZMQ_PUSH 连接：pzmq _zmq(zmq_push_url, ZMQ_PUSH)
+    - 发送响应数据：_zmq.send_data(out)
+  3. TcpSession 接收响应：
+    - TcpSession 继承自 zmq_bus_com
+    - 在 zmq_bus_com::work() 中创建了 ZMQ_PULL 连接
+    - 当收到ZMQ数据时，触发回调：this->send_data(data->string())
+  4. TcpSession 发送给客户端：
+    - TcpSession 重写了 send_data() 方法（session.h:18-24）
+    - 将数据写入TCP连接：conn_->send(buf)
+
+  完整流程：
+  unit_action_match → usr_print_error(com_id) → zmq_com_send(com_id)
+  → ZMQ_PUSH → ZMQ_PULL (TcpSession) → TcpSession::send_data() 
+  → TCP连接 → TCP客户端
+
+  所以：通过ZMQ的PUSH/PULL模式，将响应精确地发送回对应com_id的TCP连接，实现了请
+  求-响应的完整闭环！
+
+  ## 完整的数据流架构
+
+  1. 请求流（客户端 → LLM服务）
+
+  TCP Client
+      ↓ (TCP连接)
+  TCP Server (监听配置端口，如10001)
+      ↓ (创建TcpSession，分配com_id)
+  TcpSession (继承zmq_bus_com)
+      ↓ (ZMQ_PULL接收TCP数据)
+  unit_action_match(com_id, json_data)
+      ↓ (解析JSON，提取work_id等)
+  unit_call() 或 推理处理
+      ↓ (调用实际的LLM服务)
+  LLM Unit (实际推理服务)
+      ↓ (ZMQ_PUB发布结果)
+  inference_url
+
+  2. 响应流（LLM服务 → 客户端）
+
+  LLM Unit
+      ↓ (ZMQ_PUB发布到inference_url)
+  llm_channel_obj (ZMQ_SUB订阅inference_url)
+      ↓ (接收数据，处理后)
+  llm_channel_obj::send_raw_to_usr()
+      ↓ (ZMQ_PUSH发送到output_url)
+  output_url
+      ↓ (ZMQ_PULL接收)
+  TcpSession (zmq_bus_com基类的ZMQ_PULL)
+      ↓ (触发回调)
+  TcpSession::send_data() [重写方法]
+      ↓ (TCP发送)
+  TCP Client
+
+  3. 错误/状态响应流
+
+  unit_action_match 处理异常/状态
+      ↓
+  usr_print_error(request_id, work_id, error_msg, com_id)
+      ↓
+  zmq_com_send(com_id, response)
+      ↓ (根据com_id构建ZMQ URL)
+  ZMQ_PUSH (推送到特定com_id对应的端口)
+      ↓
+  TcpSession (ZMQ_PULL接收)
+      ↓
+  TcpSession::send_data()
+      ↓ (TCP发送)
+  TCP Client
+
+  4. 关键组件说明
+
+  端口分配：
+  - config_tcp_server: TCP服务监听端口（如10001）
+  - com_id: 每个TCP连接的唯一标识符
+  - inference_url: LLM发布推理结果的ZMQ端口
+  - output_url: llm_channel_obj推送结果的ZMQ端口
+
+  ZMQ连接类型：
+  - ZMQ_PUB/SUB: LLM Unit ↔ llm_channel_obj
+  - ZMQ_PUSH/PULL: llm_channel_obj ↔ TcpSession
+  - ZMQ_PUSH/PULL: 错误响应 ↔ TcpSession
+
+  核心桥接：
+  - TcpSession: TCP ↔ ZMQ 的双向桥接
+  - llm_channel_obj: LLM服务 ↔ 用户请求的数据路由
+  - unit_action_match: 请求解析和分发中心
+
+  这个架构实现了：TCP客户端 ↔ unit-manager ↔ infra-controller ↔ LLM服务
+  的完整通信链路。
+
+## 那为什么ZMQ_PUB和ZMQ_SUB分别用publisher_url_和inference_url_创建
